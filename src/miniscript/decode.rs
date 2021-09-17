@@ -37,7 +37,8 @@ fn return_none<T>(_: usize) -> Option<T> {
 #[derive(Copy, Clone, Debug)]
 enum NonTerm {
     Expression,
-    MaybeSwap,
+    WExpression,
+    Swap,
     MaybeAndV,
     Alt,
     Check,
@@ -145,6 +146,7 @@ macro_rules! match_token {
 }
 
 ///Vec representing terminals stack while decoding.
+#[derive(Debug)]
 struct TerminalStack<Pk: MiniscriptKey, Ctx: ScriptContext>(Vec<Miniscript<Pk, Ctx>>);
 
 impl<Pk: MiniscriptKey, Ctx: ScriptContext> TerminalStack<Pk, Ctx> {
@@ -221,8 +223,8 @@ pub fn parse<Ctx: ScriptContext>(
     let mut non_term = Vec::with_capacity(tokens.len());
     let mut term = TerminalStack(Vec::with_capacity(tokens.len()));
 
+    // top level cannot be swap, must be B
     non_term.push(NonTerm::MaybeAndV);
-    non_term.push(NonTerm::MaybeSwap);
     non_term.push(NonTerm::Expression);
     loop {
         match non_term.pop() {
@@ -351,34 +353,24 @@ pub fn parse<Ctx: ScriptContext>(
                             // `OP_ADD` or not and do the right thing
                         },
                     ),
-                    // fromaltstack
-                    Tk::FromAltStack => {
-                        non_term.push(NonTerm::Alt);
-                        non_term.push(NonTerm::MaybeAndV);
-                        non_term.push(NonTerm::MaybeSwap);
-                        non_term.push(NonTerm::Expression);
-                    },
                     // most other fragments
                     Tk::Num(0) => term.reduce0(Terminal::False)?,
                     Tk::Num(1) => term.reduce0(Terminal::True)?,
                     Tk::EndIf => {
                         non_term.push(NonTerm::EndIf);
                         non_term.push(NonTerm::MaybeAndV);
-                        non_term.push(NonTerm::MaybeSwap);
                         non_term.push(NonTerm::Expression);
                     },
                     // boolean conjunctions and disjunctions
                     Tk::BoolAnd => {
                         non_term.push(NonTerm::AndB);
                         non_term.push(NonTerm::Expression);
-                        non_term.push(NonTerm::MaybeSwap);
-                        non_term.push(NonTerm::Expression);
+                        non_term.push(NonTerm::WExpression);
                     },
                     Tk::BoolOr => {
                         non_term.push(NonTerm::OrB);
                         non_term.push(NonTerm::Expression);
-                        non_term.push(NonTerm::MaybeSwap);
-                        non_term.push(NonTerm::Expression);
+                        non_term.push(NonTerm::WExpression);
                     },
                     // CHECKMULTISIG based multisig
                     Tk::CheckMultiSig, Tk::Num(n) => {
@@ -408,15 +400,14 @@ pub fn parse<Ctx: ScriptContext>(
                     non_term.push(NonTerm::Expression);
                 }
             }
-            Some(NonTerm::MaybeSwap) => {
+            Some(NonTerm::Swap) => {
                 // Handle `SWAP` prefixing
-                if let Some(&Tk::Swap) = tokens.peek() {
-                    tokens.next();
-                    //                    let top = term.pop().unwrap();
-                    term.reduce1(Terminal::Swap)?;
-                    //                    term.push(Terminal::Swap(Arc::new(top)));
-                    non_term.push(NonTerm::MaybeSwap);
-                }
+                match_token!(
+                    tokens,
+                    Tk::Swap => {},
+                );
+                term.reduce1(Terminal::Swap)?;
+                // Swap must be always be terminating a NonTerm as it cannot be in and_v
             }
             Some(NonTerm::Alt) => {
                 match_token!(
@@ -463,14 +454,14 @@ pub fn parse<Ctx: ScriptContext>(
                     tokens,
                     Tk::Add => {
                         non_term.push(NonTerm::ThreshW { n: n + 1, k });
+                        non_term.push(NonTerm::WExpression);
                     },
                     x => {
                         tokens.un_next(x);
                         non_term.push(NonTerm::ThreshE { n: n + 1, k });
+                        non_term.push(NonTerm::Expression);
                     },
                 );
-                non_term.push(NonTerm::MaybeSwap);
-                non_term.push(NonTerm::Expression);
             }
             Some(NonTerm::ThreshE { n, k }) => {
                 let mut subs = Vec::with_capacity(n);
@@ -485,7 +476,6 @@ pub fn parse<Ctx: ScriptContext>(
                     Tk::Else => {
                         non_term.push(NonTerm::EndIfElse);
                         non_term.push(NonTerm::MaybeAndV);
-                        non_term.push(NonTerm::MaybeSwap);
                         non_term.push(NonTerm::Expression);
                     },
                     Tk::If => match_token!(
@@ -522,6 +512,14 @@ pub fn parse<Ctx: ScriptContext>(
                     },
                 );
             }
+            Some(NonTerm::WExpression) => {
+                // W expression must be either from swap or Fromaltstack
+                match_token!(tokens,
+                    Tk::FromAltStack => { non_term.push(NonTerm::Alt);},
+                    tok => { tokens.un_next(tok); non_term.push(NonTerm::Swap);},);
+                non_term.push(NonTerm::MaybeAndV);
+                non_term.push(NonTerm::Expression);
+            }
             None => {
                 // Done :)
                 break;
@@ -536,7 +534,12 @@ pub fn parse<Ctx: ScriptContext>(
 
 fn is_and_v(tokens: &mut TokenIter) -> bool {
     match tokens.peek() {
-        None | Some(&Tk::If) | Some(&Tk::NotIf) | Some(&Tk::Else) | Some(&Tk::ToAltStack) => false,
+        None
+        | Some(&Tk::If)
+        | Some(&Tk::NotIf)
+        | Some(&Tk::Else)
+        | Some(&Tk::ToAltStack)
+        | Some(&Tk::Swap) => false,
         _ => true,
     }
 }
