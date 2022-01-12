@@ -274,20 +274,11 @@ pub fn finalize_helper<C: secp256k1::Verification>(
     for (n, input) in psbt.inputs.iter().enumerate() {
         let target = input.sighash_type.unwrap_or(bitcoin::EcdsaSigHashType::All);
         for (key, ecdsa_sig) in &input.partial_sigs {
-            let flag = bitcoin::EcdsaSigHashType::from_u32_standard(ecdsa_sig.hash_ty as u32)
-                .map_err(|_| {
-                    super::Error::InputError(
-                        InputError::Interpreter(interpreter::Error::NonStandardSigHash(
-                            ecdsa_sig.to_vec(),
-                        )),
-                        n,
-                    )
-                })?;
-            if target != flag {
+            if target != ecdsa_sig.hash_ty {
                 return Err(Error::InputError(
                     InputError::WrongSigHashFlag {
                         required: target,
-                        got: flag,
+                        got: ecdsa_sig.hash_ty,
                         pubkey: *key,
                     },
                     n,
