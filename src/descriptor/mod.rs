@@ -692,7 +692,7 @@ mod tests {
     use bitcoin::blockdata::opcodes::all::{OP_CLTV, OP_CSV};
     use bitcoin::blockdata::script::Instruction;
     use bitcoin::blockdata::{opcodes, script};
-    use bitcoin::hashes::hex::FromHex;
+    use bitcoin::hashes::hex::{FromHex, ToHex};
     use bitcoin::hashes::{hash160, sha256};
     use bitcoin::util::bip32;
     use bitcoin::{self, secp256k1, EcdsaSigHashType, PublicKey};
@@ -1189,6 +1189,18 @@ mod tests {
                 "tr({},{{pk({}),{{pk({}),or_d(pk({}),pkh({}))}}}})#fdhmu4fj",
                 p1, p2, p3, p4, p5
             )
+        )
+    }
+
+    #[test]
+    fn tr_script_pubkey() {
+        let key = Descriptor::<bitcoin::PublicKey>::from_str(
+            "tr(02e20e746af365e86647826397ba1c0e0d5cb685752976fe2f326ab76bdc4d6ee9)",
+        )
+        .unwrap();
+        assert_eq!(
+            key.script_pubkey().to_hex(),
+            "51209c19294f03757da3dc235a5960631e3c55751632f5889b06b7a053bdc0bcfbcb"
         )
     }
 

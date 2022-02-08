@@ -212,57 +212,63 @@ impl<Pk: MiniscriptKey> Tr<Pk> {
     {
         // If the value is already cache, read it
         // read only panics if the lock is poisoned (meaning other thread having a lock panicked)
-        if let Some(spend_info) = &*self.spend_info.read().expect("Lock poisoned") {
-            return Arc::clone(spend_info);
-        } else {
-            // Get a new secp context
-            // This would be cheap operation after static context support from upstream
-            let secp = secp256k1::Secp256k1::verification_only();
-            // Key spend path with no merkle root
-            let data = if self.tree.is_none() {
-                TaprootSpendInfo::new_key_spend(&secp, self.internal_key.to_x_only_pubkey(), None)
-            } else {
-                let mut builder = TaprootBuilder::new();
-                for (depth, ms) in self.iter_scripts() {
-                    let script = ms.encode();
-                    builder = builder
-                        .add_leaf(depth, script)
-                        .expect("Computing spend data on a valid Tree should always succeed");
-                }
-                // Assert builder cannot error here because we have a well formed descriptor
-                match builder.finalize(&secp, self.internal_key.to_x_only_pubkey()) {
-                    Ok(data) => data,
-                    Err(e) => match e {
-                        TaprootBuilderError::InvalidMerkleTreeDepth(_) => {
-                            unreachable!("Depth checked in struct construction")
-                        }
-                        TaprootBuilderError::NodeNotInDfsOrder => {
-                            unreachable!("Insertion is called in DFS order")
-                        }
-                        TaprootBuilderError::OverCompleteTree => {
-                            unreachable!("Taptree is a well formed tree")
-                        }
-                        TaprootBuilderError::InvalidInternalKey(_) => {
-                            unreachable!("Internal key checked for validity")
-                        }
-                        TaprootBuilderError::IncompleteTree => {
-                            unreachable!("Taptree is a well formed tree")
-                        }
-                        TaprootBuilderError::EmptyTree => {
-                            unreachable!("Taptree is a well formed tree with atleast 1 element")
-                        }
-                    },
-                }
-            };
-            *self.spend_info.write().expect("Lock poisoned") = Some(Arc::new(data));
-            // Fetch the cached value
-            Arc::clone(
-                self.spend_info
-                    .read()
-                    .expect("Lock poisoned")
-                    .as_ref() // deref from RwLockReadGuard to Option<TaprootSpendInfo>
-                    .expect("Value cached above, option must be some"),
-            )
+        let spend_info = self
+            .spend_info
+            .read()
+            .expect("Lock poisoned")
+            .as_ref()
+            .map(Arc::clone);
+
+        match spend_info {
+            Some(spend_info) => spend_info,
+            None => {
+                // Get a new secp context
+                // This would be cheap operation after static context support from upstream
+                let secp = secp256k1::Secp256k1::verification_only();
+                // Key spend path with no merkle root
+                let data = if self.tree.is_none() {
+                    TaprootSpendInfo::new_key_spend(
+                        &secp,
+                        self.internal_key.to_x_only_pubkey(),
+                        None,
+                    )
+                } else {
+                    let mut builder = TaprootBuilder::new();
+                    for (depth, ms) in self.iter_scripts() {
+                        let script = ms.encode();
+                        builder = builder
+                            .add_leaf(depth, script)
+                            .expect("Computing spend data on a valid Tree should always succeed");
+                    }
+                    // Assert builder cannot error here because we have a well formed descriptor
+                    match builder.finalize(&secp, self.internal_key.to_x_only_pubkey()) {
+                        Ok(data) => data,
+                        Err(e) => match e {
+                            TaprootBuilderError::InvalidMerkleTreeDepth(_) => {
+                                unreachable!("Depth checked in struct construction")
+                            }
+                            TaprootBuilderError::NodeNotInDfsOrder => {
+                                unreachable!("Insertion is called in DFS order")
+                            }
+                            TaprootBuilderError::OverCompleteTree => {
+                                unreachable!("Taptree is a well formed tree")
+                            }
+                            TaprootBuilderError::InvalidInternalKey(_) => {
+                                unreachable!("Internal key checked for validity")
+                            }
+                            TaprootBuilderError::IncompleteTree => {
+                                unreachable!("Taptree is a well formed tree")
+                            }
+                            TaprootBuilderError::EmptyTree => {
+                                unreachable!("Taptree is a well formed tree with atleast 1 element")
+                            }
+                        },
+                    }
+                };
+                let spend_info = Arc::new(data);
+                *self.spend_info.write().expect("Lock poisoned") = Some(Arc::clone(&spend_info));
+                spend_info
+            }
         }
     }
 }
